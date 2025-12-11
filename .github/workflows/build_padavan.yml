@@ -111,7 +111,7 @@ on:
         default: true
 
 env:
-  FIRMWARE_AUTHOR: TurBoTse
+  FIRMWARE_AUTHOR: TWShiyuLiou1997
   TOOLCHAIN: ${{ inputs.toolchain }}
   TOOLCHAIN_URL: https://github.com/TurBoTse/padavan/releases/download/toolchain/${{ inputs.toolchain }}.tar.xz
   CONFIGFILE: trunk/configs/templates/${{ inputs.target }}.config
@@ -131,7 +131,7 @@ jobs:
           fetch-depth: 1
       - uses: actions/checkout@main
         with:
-          repository: TurBoTse/padavan
+          repository: TWShiyuLiou1997/padavan1
           ref: main
           fetch-depth: 1
 
@@ -151,7 +151,7 @@ jobs:
           sudo apt-get install -y \
             bison flex gperf help2man libtool-bin texinfo python3-docutils autopoint gettext ccache \
             autoconf automake liblzma-dev libltdl-dev liblzo2-dev jq
-          echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +%Y%m%d)" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
 
       - name: Validate Input JSON
         run: |
@@ -193,18 +193,18 @@ jobs:
             echo "CONFIG_FIRMWARE_MT7621_OC=${{ inputs.mt7621_oc }}" >> "$CONFIGFILE"
           fi
 
-      - name: Apply Custom Nano Optimization (Keep 8 Modules)
+      - name: Apply Custom Nano Optimization (Keep 7 Modules)
         if: ${{ inputs.nanoversion }}
         run: |
-          # 1. 文件系統精簡 (保持原樣，移除所有 USB 文件系統支持)
+          # 1. 文件系统精简 (移除所有 USB 文件系统支持)
           for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
             sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/" "$CONFIGFILE"
           done
           
-          # 2. 定制化模組刪除清單 (已剔除 OPENSSH, SFTP, QOS, TCPDUMP, CURL, HTTPS, OPENSSL_EC, OPENSSL_EXE)
+          # 2. 定制化模块删除清单 (已剔除 OPENSSH, SFTP, TCPDUMP, CURL, HTTPS, OPENSSL_EC, OPENSSL_EXE)
           modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED 
             SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
-            XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA
+            XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
             ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT
             SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST
             FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS
@@ -215,8 +215,17 @@ jobs:
             sed -i "s/CONFIG_FIRMWARE_INCLUDE_${m}=y/CONFIG_FIRMWARE_INCLUDE_${m}=n/" "$CONFIGFILE"
           done
           
-          echo "✅ 已經將所有不必要的模組移除。SSH/SFTP, QOS, HTTPS 和診斷工具已保留。"
-      
+          # 4. 反向確保保留模組 (將清單上指定的模組設為 =y)
+          keep_modules=(OPENSSH SFTP QOS TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
+          for m in "${keep_modules[@]}"; do
+            # 刪除所有現有的 CONFIG_FIRMWARE_INCLUDE_${m} 相關行（包括註解行）
+            sed -i "/CONFIG_FIRMWARE_INCLUDE_${m}/d" "$CONFIGFILE"
+            # 在文件末尾強制添加 CONFIG_FIRMWARE_INCLUDE_${m}=y
+            echo "CONFIG_FIRMWARE_INCLUDE_${m}=y" >> "$CONFIGFILE"
+          done
+          
+          echo "✅ 已經將所有不必要的模組移除。SSH/SFTP, HTTPS 和診斷工具已保留並確保啟用。"
+
       - name: Build Firmware
         run: |
           make ${{ inputs.target }} TOOLCHAIN=${{ inputs.toolchain }}
