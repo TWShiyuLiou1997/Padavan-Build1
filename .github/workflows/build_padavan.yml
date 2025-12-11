@@ -216,7 +216,7 @@ jobs:
           done
           
           # 4. 反向確保保留模組 (將清單上指定的模組設為 =y)
-          keep_modules=(OPENSSH SFTP QOS TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
+          keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
           for m in "${keep_modules[@]}"; do
             # 刪除所有現有的 CONFIG_FIRMWARE_INCLUDE_${m} 相關行（包括註解行）
             sed -i "/CONFIG_FIRMWARE_INCLUDE_${m}/d" "$CONFIGFILE"
