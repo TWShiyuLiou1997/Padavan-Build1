@@ -1,4 +1,4 @@
-# Build TurBoTse's Padavan 4.4 Kernel - Optimized (Gemini Mix)
+# Build TurBoTse's Padavan 4.4 Kernel - Optimized Final Version
 name: Custom Build
 
 on:
@@ -158,8 +158,8 @@ jobs:
             autoconf automake liblzma-dev libltdl-dev liblzo2-dev jq
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
           
-      # 複製配置檔到根目錄，作為編譯的 .config
-      - name: Copy Config File to .config (關鍵修正)
+      # 1. 複製配置檔到根目錄，作為編譯的 .config (核心修正)
+      - name: Copy Config File to .config
         run: |
           if [ -f "${{ env.CONFIG_TEMPLATE }}" ]; then
             cp "${{ env.CONFIG_TEMPLATE }}" .config
@@ -193,68 +193,7 @@ jobs:
           fi
           export_json "$(cat plugins_fixed.json)" "PLUGIN_"
 
-      # **注意：這裡需要確保您的 scripts 目錄是存在的**
-      - name: Generate Customization Scripts
-        run: |
-          mkdir -p trunk/custom/scripts
-          
-          # setaccount.sh
-          cat << 'EOF' > trunk/custom/scripts/setaccount.sh
-#!/bin/sh
-account=$1
-password=$2
-defaultfile=$3
-
-if [ -n "$account" ]; then
-	sed -i "28s/\"admin\"/\"$account\"/g" $defaultfile
-fi
-if [ -n "$password" ]; then
-	sed -i "47s/\"admin\"/\"$password\"/g" $defaultfile
-fi
-EOF
-
-          # setip.sh
-          cat << 'EOF' > trunk/custom/scripts/setip.sh
-#!/bin/sh
-lanip=$1
-defaultfile=$2
-dicfile=$3
-oc1=${lanip%%.*}
-x=${lanip#*.*}
-oc2=${x%%.*}
-x=${x#*.*}
-oc3=${x%%.*}
-dhcpfrom=$oc1.$oc2.$oc3.100
-dhcpto=$oc1.$oc2.$oc3.244
-sed -i "s/\"192.168.2.1\"/\"$lanip\"/g" $defaultfile
-sed -i "s/\"192.168.2.100\"/\"$dhcpfrom\"/g" $defaultfile
-sed -i "s/\"192.168.2.244\"/\"$dhcpto\"/g" $defaultfile
-sed -i "s/192.168.2.1/$lanip/" $dicfile
-EOF
-
-          # setwifi.sh
-          cat << 'EOF' > trunk/custom/scripts/setwifi.sh
-#!/bin/sh
-wifi_2g_ssid=$1
-wifi_2g_pwd=$2
-wifi_5g_ssid=$3
-wifi_5g_pwd=$4
-defaultfile=$5
-
-if [ -n "$wifi_2g_ssid" ]; then
-	sed -i "40s/BOARD_PID \"_%s\"/\"$wifi_2g_ssid\"/g" $defaultfile
-fi
-if [ -n "$wifi_2g_pwd" ]; then
-	sed -i "44s/\"1234567890\"/\"$wifi_2g_pwd\"/g" $defaultfile
-fi
-if [ -n "$wifi_5g_ssid" ]; then
-	sed -i "41s/BOARD_PID \"_5G_%s\"/\"$wifi_5g_ssid\"/g" $defaultfile
-fi
-if [ -n "$wifi_5g_pwd" ]; then
-    sed -i "45s/\"1234567890\"/\"$wifi_5g_pwd\"/g" $defaultfile
-fi
-EOF
-
+      # 2. 執行自定義腳本並修改 .config
       - name: Apply Customization & Plugin Flags to .config
         run: |
           chmod +x trunk/custom/scripts/*.sh || true
@@ -275,6 +214,7 @@ EOF
             echo "CONFIG_FIRMWARE_MT7621_OC=${{ inputs.mt7621_oc }}" >> .config
           fi
 
+      # 3. 執行 Nano 優化 (修改 .config)
       - name: Apply Custom Nano Optimization (Keep 7 Modules)
         if: ${{ inputs.nanoversion }}
         run: |
@@ -283,7 +223,7 @@ EOF
             sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/" .config
           done
           
-          # 2. 定制化模块删除清单 (保持您原有 nano 刪除列表)
+          # 2. 定制化模块删除清单
           modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED 
             SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
             XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -306,7 +246,7 @@ EOF
           
           echo "✅ 已經將所有不必要的模組移除。SSH/SFTP, HTTPS 和診斷工具已保留並確保啟用。"
 
-      # 【修正】使用通用的 make all 啟動編譯流程
+      # 4. 啟動編譯 (使用修正後的 make all)
       - name: Build Firmware
         run: |
           echo "Compiling firmware with make all..."
@@ -321,7 +261,7 @@ EOF
           
           echo "Organizing output files..."
           i=1
-          for f in images/*.trx; do  # 注意：在 Padavan 根目錄，images 是 trunk/images 的符號鏈接
+          for f in images/*.trx; do
             if [ -f "$f" ]; then
               suffix=""
               [ $i -gt 1 ] && suffix="-$i"
@@ -331,12 +271,12 @@ EOF
           done
           ls -lh trunk/output/
 
+      # --- 後續發佈和清理流程保持不變 ---
       - uses: actions/upload-artifact@main
         with:
           name: ${{ inputs.target }}-${{ inputs.toolchain }}-${{ env.BUILD_DATE }}
           path: trunk/output/*.trx
 
-      # --- 後續發佈和清理流程保持不變 ---
       - uses: softprops/action-gh-release@master
         if: ${{ inputs.release }}
         with:
