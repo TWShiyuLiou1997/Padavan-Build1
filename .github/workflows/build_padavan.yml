@@ -1,5 +1,4 @@
-# Build TurBoTse's Padavan 4.4 Kernel
-
+# Build TurBoTse's Padavan 4.4 Kernel - Optimized (Gemini Mix)
 name: Custom Build
 
 on:
@@ -114,7 +113,8 @@ env:
   FIRMWARE_AUTHOR: TWShiyuLiou1997
   TOOLCHAIN: ${{ inputs.toolchain }}
   TOOLCHAIN_URL: https://github.com/TurBoTse/padavan/releases/download/toolchain/${{ inputs.toolchain }}.tar.xz
-  CONFIGFILE: trunk/configs/templates/${{ inputs.target }}.config
+  # 參考配置檔案的路徑
+  CONFIG_TEMPLATE: trunk/configs/templates/${{ inputs.target }}.config
 
 jobs:
   build:
@@ -125,16 +125,21 @@ jobs:
       actions: write
 
     steps:
-      - uses: actions/checkout@main
+      - name: Checkout CI Scripts (Current Repo)
+        uses: actions/checkout@main
         with:
           path: current
           fetch-depth: 1
-      - uses: actions/checkout@main
+          
+      # 克隆 Padavan 原始碼到根目錄
+      - name: Clone Padavan Source
+        uses: actions/checkout@main
         with:
           repository: TWShiyuLiou1997/padavan-4.4
           ref: main
           fetch-depth: 1
 
+      # 使用 ccache 提升重複編譯速度
       - uses: hendrikmuhs/ccache-action@main
         with:
           key: ${{ inputs.target }}-${{ inputs.toolchain }}
@@ -145,13 +150,24 @@ jobs:
           check-latest: true
           cache: false
 
-      - name: Install Build Dependencies
+      - name: Install Build Dependencies & Set Date
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             bison flex gperf help2man libtool-bin texinfo python3-docutils autopoint gettext ccache \
             autoconf automake liblzma-dev libltdl-dev liblzo2-dev jq
           echo "BUILD_DATE=$(TZ='Asia/Taipei' date +%Y%m%d)" >> $GITHUB_ENV
+          
+      # 複製配置檔到根目錄，作為編譯的 .config
+      - name: Copy Config File to .config (關鍵修正)
+        run: |
+          if [ -f "${{ env.CONFIG_TEMPLATE }}" ]; then
+            cp "${{ env.CONFIG_TEMPLATE }}" .config
+            echo "✅ Copied ${{ inputs.target }}.config to .config"
+          else
+            echo "::error:: Configuration template file not found: ${{ env.CONFIG_TEMPLATE }}"
+            exit 1
+          fi
 
       - name: Validate Input JSON
         run: |
@@ -177,20 +193,86 @@ jobs:
           fi
           export_json "$(cat plugins_fixed.json)" "PLUGIN_"
 
-      - name: Apply Configurations
+      # **注意：這裡需要確保您的 scripts 目錄是存在的**
+      - name: Generate Customization Scripts
+        run: |
+          mkdir -p trunk/custom/scripts
+          
+          # setaccount.sh
+          cat << 'EOF' > trunk/custom/scripts/setaccount.sh
+#!/bin/sh
+account=$1
+password=$2
+defaultfile=$3
+
+if [ -n "$account" ]; then
+	sed -i "28s/\"admin\"/\"$account\"/g" $defaultfile
+fi
+if [ -n "$password" ]; then
+	sed -i "47s/\"admin\"/\"$password\"/g" $defaultfile
+fi
+EOF
+
+          # setip.sh
+          cat << 'EOF' > trunk/custom/scripts/setip.sh
+#!/bin/sh
+lanip=$1
+defaultfile=$2
+dicfile=$3
+oc1=${lanip%%.*}
+x=${lanip#*.*}
+oc2=${x%%.*}
+x=${x#*.*}
+oc3=${x%%.*}
+dhcpfrom=$oc1.$oc2.$oc3.100
+dhcpto=$oc1.$oc2.$oc3.244
+sed -i "s/\"192.168.2.1\"/\"$lanip\"/g" $defaultfile
+sed -i "s/\"192.168.2.100\"/\"$dhcpfrom\"/g" $defaultfile
+sed -i "s/\"192.168.2.244\"/\"$dhcpto\"/g" $defaultfile
+sed -i "s/192.168.2.1/$lanip/" $dicfile
+EOF
+
+          # setwifi.sh
+          cat << 'EOF' > trunk/custom/scripts/setwifi.sh
+#!/bin/sh
+wifi_2g_ssid=$1
+wifi_2g_pwd=$2
+wifi_5g_ssid=$3
+wifi_5g_pwd=$4
+defaultfile=$5
+
+if [ -n "$wifi_2g_ssid" ]; then
+	sed -i "40s/BOARD_PID \"_%s\"/\"$wifi_2g_ssid\"/g" $defaultfile
+fi
+if [ -n "$wifi_2g_pwd" ]; then
+	sed -i "44s/\"1234567890\"/\"$wifi_2g_pwd\"/g" $defaultfile
+fi
+if [ -n "$wifi_5g_ssid" ]; then
+	sed -i "41s/BOARD_PID \"_5G_%s\"/\"$wifi_5g_ssid\"/g" $defaultfile
+fi
+if [ -n "$wifi_5g_pwd" ]; then
+    sed -i "45s/\"1234567890\"/\"$wifi_5g_pwd\"/g" $defaultfile
+fi
+EOF
+
+      - name: Apply Customization & Plugin Flags to .config
         run: |
           chmod +x trunk/custom/scripts/*.sh || true
+          
+          # 執行自定義腳本，修改 defaults.h 和 CN.dict
           bash trunk/custom/scripts/setip.sh "$LANIP" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict
           bash trunk/custom/scripts/setaccount.sh "$SIGNACCOUNT" "$SIGNPASSWORD" trunk/user/shared/src/defaults.h
           bash trunk/custom/scripts/setwifi.sh "$WIFI2GSSID" "$WIFI2GPSK" "$WIFI5GSSID" "$WIFI5GPSK" trunk/user/shared/src/defaults.h
 
+          # 將插件配置寫入根目錄的 .config
           for key in $(env | grep '^PLUGIN_' | cut -d= -f1); do
-            echo "CONFIG_FIRMWARE_INCLUDE_${key#PLUGIN_}=${!key}" >> "$CONFIGFILE"
+            echo "CONFIG_FIRMWARE_INCLUDE_${key#PLUGIN_}=${!key}" >> .config
           done
 
+          # 寫入超頻配置到根目錄的 .config
           if [ "${{ inputs.cpufreq }}" = "true" ]; then
-            echo "CONFIG_FIRMWARE_INCLUDE_OC=y" >> "$CONFIGFILE"
-            echo "CONFIG_FIRMWARE_MT7621_OC=${{ inputs.mt7621_oc }}" >> "$CONFIGFILE"
+            echo "CONFIG_FIRMWARE_INCLUDE_OC=y" >> .config
+            echo "CONFIG_FIRMWARE_MT7621_OC=${{ inputs.mt7621_oc }}" >> .config
           fi
 
       - name: Apply Custom Nano Optimization (Keep 7 Modules)
@@ -198,10 +280,10 @@ jobs:
         run: |
           # 1. 文件系统精简 (移除所有 USB 文件系统支持)
           for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
-            sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/" "$CONFIGFILE"
+            sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/" .config
           done
           
-          # 2. 定制化模块删除清单 (已剔除 OPENSSH, SFTP, TCPDUMP, CURL, HTTPS, OPENSSL_EC, OPENSSL_EXE)
+          # 2. 定制化模块删除清单 (保持您原有 nano 刪除列表)
           modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED 
             SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN
             XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS
@@ -212,41 +294,49 @@ jobs:
             
           # 3. 執行刪除操作 (將清單上所有模組設為 =n)
           for m in "${modules[@]}"; do
-            sed -i "s/CONFIG_FIRMWARE_INCLUDE_${m}=y/CONFIG_FIRMWARE_INCLUDE_${m}=n/" "$CONFIGFILE"
+            sed -i "s/CONFIG_FIRMWARE_INCLUDE_${m}=y/CONFIG_FIRMWARE_INCLUDE_${m}=n/" .config
           done
           
-          # 4. 反向確保保留模組 (將清單上指定的模組設為 =y)
+          # 4. 反向確保保留模組
           keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
           for m in "${keep_modules[@]}"; do
-            # 刪除所有現有的 CONFIG_FIRMWARE_INCLUDE_${m} 相關行（包括註解行）
-            sed -i "/CONFIG_FIRMWARE_INCLUDE_${m}/d" "$CONFIGFILE"
-            # 在文件末尾強制添加 CONFIG_FIRMWARE_INCLUDE_${m}=y
-            echo "CONFIG_FIRMWARE_INCLUDE_${m}=y" >> "$CONFIGFILE"
+            sed -i "/CONFIG_FIRMWARE_INCLUDE_${m}/d" .config
+            echo "CONFIG_FIRMWARE_INCLUDE_${m}=y" >> .config
           done
           
           echo "✅ 已經將所有不必要的模組移除。SSH/SFTP, HTTPS 和診斷工具已保留並確保啟用。"
 
+      # 【修正】使用通用的 make all 啟動編譯流程
       - name: Build Firmware
         run: |
-          make ${{ inputs.target }} TOOLCHAIN=${{ inputs.toolchain }}
+          echo "Compiling firmware with make all..."
+          # 運行通用的 make all，Makefile 會讀取根目錄的 .config
+          make all TOOLCHAIN=${{ inputs.toolchain }} || { echo "::error:: Compilation failed!"; exit 1; }
+          
           mkdir -p trunk/output
           base="${FIRMWARE_AUTHOR}-${{ inputs.target }}-4.4-${{ inputs.toolchain }}"
           [ "${{ inputs.nanoversion }}" = "true" ] && base="${base}-nano"
           [ "${{ inputs.cpufreq }}" = "true" ] && base="${base}-cpufreq-${{ inputs.mt7621_oc }}"
           base="${base}-${BUILD_DATE}"
+          
+          echo "Organizing output files..."
           i=1
-          for f in trunk/images/*.trx; do
-            suffix=""
-            [ $i -gt 1 ] && suffix="-$i"
-            mv "$f" "trunk/output/${base}${suffix}.trx"
-            i=$((i+1))
+          for f in images/*.trx; do  # 注意：在 Padavan 根目錄，images 是 trunk/images 的符號鏈接
+            if [ -f "$f" ]; then
+              suffix=""
+              [ $i -gt 1 ] && suffix="-$i"
+              mv "$f" "trunk/output/${base}${suffix}.trx"
+              i=$((i+1))
+            fi
           done
+          ls -lh trunk/output/
 
       - uses: actions/upload-artifact@main
         with:
           name: ${{ inputs.target }}-${{ inputs.toolchain }}-${{ env.BUILD_DATE }}
           path: trunk/output/*.trx
 
+      # --- 後續發佈和清理流程保持不變 ---
       - uses: softprops/action-gh-release@master
         if: ${{ inputs.release }}
         with:
