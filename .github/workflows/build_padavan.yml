@@ -178,7 +178,6 @@ jobs:
           export_json "$(cat plugins_fixed.json)" "PLUGIN_"
 
       - name: Generate Customization Scripts
-        # 此步驟動態創建並填充了 setip.sh, setaccount.sh, setwifi.sh
         run: |
           mkdir -p trunk/custom/scripts
           
